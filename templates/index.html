@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Video Tracking Visualization</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster/dist/MarkerCluster.css">
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet.markercluster/dist/leaflet.markercluster.js"></script>
+    <style>
+        #map {
+            height: 600px;
+            width: 100%;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div>
+        <label for="videoSelect">Select Video:</label>
+        <select id="videoSelect">
+            <!-- 비디오 옵션은 JavaScript로 추가됩니다 -->
+        </select>
+    </div>
+    <div id="map"></div>
+    <script>
+        const apiBaseUrl = "http://127.0.0.1:5000/api";
+
+        const map = L.map("map").setView([37.123456, 127.123456], 14); // 초기 지도 설정
+        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+            maxZoom: 18,
+            attribution: '© OpenStreetMap contributors',
+        }).addTo(map);
+
+        // 마커 클러스터 그룹 추가
+        const markerCluster = L.markerClusterGroup({
+            zoomToBoundsOnClick: false, // 클릭 시 기본 줌 비활성화
+        });
+        map.addLayer(markerCluster);
+
+        // 궤적 레이어를 저장
+        let trackLines = [];
+
+        // 비디오 선택 UI에 비디오 목록 추가
+        async function loadVideos() {
+            const response = await fetch(`${apiBaseUrl}/videos`);
+            const videos = await response.json();
+            const videoSelect = document.getElementById("videoSelect");
+
+            videos.forEach(video => {
+                const option = document.createElement("option");
+                option.value = video.id;
+                option.textContent = video.filename;
+                videoSelect.appendChild(option);
+            });
+
+            // 초기 비디오 데이터 로드
+            videoSelect.addEventListener("change", () => {
+                loadIntersections(videoSelect.value);
+            });
+
+            if (videos.length > 0) {
+                loadIntersections(videos[0].id);
+            }
+        }
+
+        // 교차점 데이터를 지도에 표시
+        async function loadIntersections(videoId) {
+            clearMap(); // 기존 마커와 궤적 제거
+            const response = await fetch(`${apiBaseUrl}/intersections/${videoId}`);
+            const intersections = await response.json();
+
+            intersections.forEach(intersection => {
+                const marker = L.marker([intersection.latitude, intersection.longitude]);
+                markerCluster.addLayer(marker); // 마커 클러스터에 추가
+
+                // 마커 클릭 이벤트
+                marker.on("click", () => {
+                    loadTracks(videoId, intersection.track_id_1, intersection.track_id_2);
+                });
+            });
+
+            // 클러스터 클릭 시 줌 레벨 강제 조정
+            markerCluster.on("clusterclick", (event) => {
+                const cluster = event.layer;
+                const bounds = cluster.getBounds();
+
+                // 클러스터 중심으로 지도 줌 레벨 강제 조정
+                const clusterCenter = bounds.getCenter();
+                map.setView(clusterCenter, map.getZoom() + 2); // 현재 줌 레벨에서 +2
+            });
+
+            // 지도 범위 설정
+            if (markerCluster.getLayers().length > 0) {
+                const bounds = markerCluster.getBounds();
+                map.fitBounds(bounds);
+            }
+        }
+
+        // 트래킹 데이터로 궤적을 그리기
+        async function loadTracks(videoId, trackId1, trackId2) {
+            clearTracks(); // 기존 궤적 제거
+            const response = await fetch(`${apiBaseUrl}/tracking/${videoId}`);
+            const tracks = await response.json();
+
+            // 첫 번째 객체 궤적
+            const track1Coords = tracks
+                .filter(track => track.track_id === trackId1)
+                .map(track => [track.latitude, track.longitude]);
+
+            const track1Line = L.polyline(track1Coords, { color: "blue" }).addTo(map);
+            trackLines.push(track1Line);
+
+            // 두 번째 객체 궤적
+            const track2Coords = tracks
+                .filter(track => track.track_id === trackId2)
+                .map(track => [track.latitude, track.longitude]);
+
+            const track2Line = L.polyline(track2Coords, { color: "red" }).addTo(map);
+            trackLines.push(track2Line);
+
+            // 지도 범위 설정
+            const bounds = L.latLngBounds([...track1Coords, ...track2Coords]);
+            map.fitBounds(bounds);
+        }
+
+        // 지도에서 모든 마커와 궤적 제거
+        function clearMap() {
+            markerCluster.clearLayers();
+            clearTracks();
+        }
+
+        function clearTracks() {
+            trackLines.forEach(line => map.removeLayer(line));
+            trackLines = [];
+        }
+
+        // 초기 비디오 로드
+        loadVideos();
+    </script>
+</body>
+</html>
